@@ -40,14 +40,13 @@
 
 using namespace std;
 
-namespace rtengine
-{
+constexpr int TILESIZE = 192;
+constexpr int TILEBORDER = 10;
+constexpr int CACHESIZE = (TILESIZE+2*TILEBORDER);
 
-#define TILESIZE 192
-#define TILEBORDER 10
-#define CACHESIZE (TILESIZE+2*TILEBORDER)
+namespace {
 
-inline void RawImageSource::dcb_initTileLimits(int &colMin, int &rowMin, int &colMax, int &rowMax, int x0, int y0, int border, int borderOffset)
+void dcb_initTileLimits(int W, int H, int x0, int y0, int border, int borderOffset, int &colMin, int &rowMin, int &colMax, int &rowMax)
 {
     rowMin = border;
     colMin = border;
@@ -55,26 +54,33 @@ inline void RawImageSource::dcb_initTileLimits(int &colMin, int &rowMin, int &co
     colMax = CACHESIZE - border;
 
     if(!y0 ) {
-        rowMin = TILEBORDER + min(border,borderOffset);
+        rowMin = TILEBORDER + min(border, borderOffset);
     }
 
     if(!x0 ) {
-        colMin = TILEBORDER + min(border,borderOffset);
+        colMin = TILEBORDER + min(border, borderOffset);
     }
 
     if( y0 + TILESIZE + TILEBORDER >= H - min(border,borderOffset)) {
-        rowMax = TILEBORDER + H - min(border,borderOffset) - y0;
+        rowMax = TILEBORDER + H - min(border, borderOffset) - y0;
     }
 
     if( x0 + TILESIZE + TILEBORDER >= W - min(border,borderOffset)) {
-        colMax = TILEBORDER + W - min(border,borderOffset) - x0;
+        colMax = TILEBORDER + W - min(border, borderOffset) - x0;
     }
 }
+
+}
+
+namespace rtengine
+{
+
+
 
 void RawImageSource::dcb_fill_raw( float (*tile )[3], int x0, int y0, float** rawData)
 {
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 0);
+    dcb_initTileLimits(W, H, x0, y0, 0, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin, y = y0 - TILEBORDER + rowMin; row < rowMax; row++, y++)
         for (int col = colMin, x = x0 - TILEBORDER + colMin, indx = row * CACHESIZE + col; col < colMax; col++, x++, indx++) {
@@ -121,7 +127,7 @@ void RawImageSource::dcb_fill_border( float (*tile )[3], int border, int x0, int
 void RawImageSource::dcb_restore_red_blue(float (*tile)[3], int x0, int y0, float** rawData)
 {
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 0);
+    dcb_initTileLimits(W, H, x0, y0, 0, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin, y = y0 - TILEBORDER + rowMin; row < rowMax; row++, y++)
         for (int col = colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1), x = x0 - TILEBORDER + col, indx = row * CACHESIZE + col, c = ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + col); col < colMax; col+=2, x+=2, indx+=2) {
@@ -134,7 +140,7 @@ void RawImageSource::dcb_hid(float (*tile)[3], int x0, int y0)
 {
     constexpr int u = CACHESIZE;
     int rowMin, colMin, rowMax, colMax, c;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 2);
+    dcb_initTileLimits(W, H, x0, y0, 2, 4, colMin, rowMin, colMax, rowMax);
 
 // simple green bilinear in R and B pixels
     for (int row = rowMin; row < rowMax; row++)
@@ -150,7 +156,7 @@ void RawImageSource::dcb_color(float (*tile)[3], int x0, int y0)
 {
     constexpr int u = CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 1);
+    dcb_initTileLimits(W, H, x0, y0, 1, 4, colMin, rowMin, colMax, rowMax);
 
     // red in blue pixel, blue in red pixel
     for (int row = rowMin; row < rowMax; row++)
@@ -177,7 +183,7 @@ void RawImageSource::dcb_hid2(float (*tile)[3], int x0, int y0)
 {
     constexpr int u = CACHESIZE, v = 2 * CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 2);
+    dcb_initTileLimits(W, H, x0, y0, 2, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin; row < rowMax; row++) {
         for (int col = colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1), indx = row * CACHESIZE + col, c = ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + col); col < colMax; col += 2, indx += 2) {
@@ -202,7 +208,7 @@ void RawImageSource::dcb_map(float (*tile)[3], uint8_t *map, int x0, int y0)
 {
     constexpr int u = 3 * CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 2);
+    dcb_initTileLimits(W, H, x0, y0, 2, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin; row < rowMax; row++) {
         for (int col = colMin, indx = row * CACHESIZE + col; col < colMax; col++, indx++) {
@@ -221,11 +227,11 @@ void RawImageSource::dcb_map(float (*tile)[3], uint8_t *map, int x0, int y0)
 }
 
 // interpolated green pixels are corrected using the map
-void RawImageSource::dcb_correction(float (*tile)[3], uint8_t* const map, int x0, int y0)
+void RawImageSource::dcb_correction(float (*tile)[3], const uint8_t* map, int x0, int y0)
 {
     constexpr int u = CACHESIZE, v = 2 * CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 2);
+    dcb_initTileLimits(W, H, x0, y0, 2, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin; row < rowMax; row++) {
         for (int indx = row * CACHESIZE + colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1); indx < row * CACHESIZE + colMax; indx += 2) {
@@ -246,7 +252,7 @@ void RawImageSource::dcb_pp(float (*tile)[3], int x0, int y0)
 {
     constexpr int u = CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 2);
+    dcb_initTileLimits(W, H, x0, y0, 2, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin; row < rowMax; row++)
         for (int col = colMin, indx = row * CACHESIZE + col; col < colMax; col++, indx++) {
@@ -299,11 +305,11 @@ void RawImageSource::dcb_pp(float (*tile)[3], int x0, int y0)
 
 // interpolated green pixels are corrected using the map
 // with correction
-void RawImageSource::dcb_correction2(float (*tile)[3], uint8_t *map, int x0, int y0)
+void RawImageSource::dcb_correction2(float (*tile)[3], const uint8_t* map, int x0, int y0)
 {
     constexpr int u = CACHESIZE, v = 2 * CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 4);
+    dcb_initTileLimits(W, H, x0, y0, 4, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin; row < rowMax; row++) {
         for (int indx = row * CACHESIZE + colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1), c = ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1)); indx < row * CACHESIZE + colMax; indx += 2) {
@@ -322,11 +328,11 @@ void RawImageSource::dcb_correction2(float (*tile)[3], uint8_t *map, int x0, int
 }
 
 // tile refinement
-void RawImageSource::dcb_refinement(float (*tile)[3], uint8_t *map, int x0, int y0)
+void RawImageSource::dcb_refinement(float (*tile)[3], const uint8_t* map, int x0, int y0)
 {
     constexpr int u = CACHESIZE, v = 2 * CACHESIZE, w = 3 * CACHESIZE;
     int rowMin, colMin, rowMax, colMax;
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, 4);
+    dcb_initTileLimits(W, H, x0, y0, 4, 4, colMin, rowMin, colMax, rowMax);
 
     for (int row = rowMin; row < rowMax; row++)
         for (int col = colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1), indx = row * CACHESIZE + col, c = ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + col); col < colMax; col += 2, indx += 2) {
@@ -369,7 +375,7 @@ void RawImageSource::dcb_color_full(float (*tile)[3], int x0, int y0, float (*ch
     int rowMin, colMin, rowMax, colMax;
 
     // we need the tile with 6 px border for next step, and (for whatever reason) with 9 px border if the tile is a border tile
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, TILEBORDER - 6, -9);
+    dcb_initTileLimits(W, H, x0, y0, TILEBORDER - 6, -9, colMin, rowMin, colMax, rowMax);
 
     float f[4], g[4];
 
@@ -380,7 +386,7 @@ void RawImageSource::dcb_color_full(float (*tile)[3], int x0, int y0, float (*ch
         }
 
     // we need the tile with 3 px border for next step
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, TILEBORDER - 3, 3);
+    dcb_initTileLimits(W, H, x0, y0, TILEBORDER - 3, 3, colMin, rowMin, colMax, rowMax);
     for (int row = rowMin; row < rowMax; row++)
         for (int col = colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin) & 1), indx = row * CACHESIZE + col, c = 1 - ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + col) / 2; col < colMax; col += 2, indx += 2) {
             f[0] = 1.f / (1.f + fabs(chroma[indx - u - 1][c] - chroma[indx + u + 1][c]) + fabs(chroma[indx - u - 1][c] - chroma[indx - w - 3][c]) + fabs(chroma[indx + u + 1][c] - chroma[indx - w - 3][c]));
@@ -397,7 +403,7 @@ void RawImageSource::dcb_color_full(float (*tile)[3], int x0, int y0, float (*ch
         }
 
     // we only need the tile without border for next step
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, TILEBORDER);
+    dcb_initTileLimits(W, H, x0, y0, TILEBORDER, 4, colMin, rowMin, colMax, rowMax);
     for (int row = rowMin; row < rowMax; row++) {
         for (int col = colMin + (ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + colMin + 1) & 1), indx = row * CACHESIZE + col, c = ri->FC(y0 - TILEBORDER + row, x0 - TILEBORDER + col + 1) / 2; col < colMax; col += 2, indx += 2) {
             for(int d = 0; d <= 1; c = 1 - c, d++) {
@@ -418,7 +424,7 @@ void RawImageSource::dcb_color_full(float (*tile)[3], int x0, int y0, float (*ch
     }
 
     // we only need the tile without border for next step
-    dcb_initTileLimits(colMin, rowMin, colMax, rowMax, x0, y0, TILEBORDER);
+    dcb_initTileLimits(W, H, x0, y0, TILEBORDER, 4, colMin, rowMin, colMax, rowMax);
 
     for(int row = rowMin; row < rowMax; row++)
         for(int col = colMin, indx = row * CACHESIZE + col; col < colMax; col++, indx++) {
