@@ -52,7 +52,7 @@ TagDirectory::TagDirectory ()
 TagDirectory::TagDirectory (TagDirectory* p, const TagAttrib* ta, ByteOrder border)
     : attribs(ta), order(border), parent(p) {}
 
-TagDirectory::TagDirectory (TagDirectory* p, FILE* f, int base, const TagAttrib* ta, ByteOrder border, bool skipIgnored)
+TagDirectory::TagDirectory (TagDirectory* p, const std::shared_ptr<IMFILE>& f, int base, const TagAttrib* ta, ByteOrder border, bool skipIgnored)
     : attribs(ta), order(border), parent(p)
 {
 
@@ -713,7 +713,7 @@ TagDirectoryTable::TagDirectoryTable (TagDirectory* p, unsigned char *v, int mem
     }
 }
 
-TagDirectoryTable::TagDirectoryTable (TagDirectory* p, FILE* f, int memsize, int offs, TagType type, const TagAttrib* ta, ByteOrder border)
+TagDirectoryTable::TagDirectoryTable (TagDirectory* p, const std::shared_ptr<IMFILE>& f, int memsize, int offs, TagType type, const TagAttrib* ta, ByteOrder border)
     : TagDirectory(p, ta, border), zeroOffset(offs), valuesSize(memsize), defaultType( type )
 {
     values = new unsigned char[valuesSize];
@@ -759,7 +759,7 @@ int TagDirectoryTable::write (int start, unsigned char* buffer)
 // this class represents a tag stored in the directory
 //-----------------------------------------------------------------------------
 
-Tag::Tag (TagDirectory* p, FILE* f, int base)
+Tag::Tag (TagDirectory* p, const std::shared_ptr<IMFILE>& f, int base)
     : type(INVALID), count(0), value(nullptr), allocOwnMemory(true), attrib(nullptr), parent(p), directory(nullptr)
 {
 
@@ -1101,7 +1101,7 @@ defsubdirs:
 
 }
 
-bool Tag::parseMakerNote(FILE* f, int base, ByteOrder bom )
+bool Tag::parseMakerNote(const std::shared_ptr<IMFILE>& f, int base, ByteOrder bom )
 {
     value = nullptr;
     Tag* tmake = parent->getRoot()->findTag("Make");
@@ -1868,7 +1868,7 @@ const TagAttrib* lookupAttrib (const TagAttrib* dir, const char* field)
 }
 
 
-TagDirectory* ExifManager::parseCIFF (FILE* f, int base, int length)
+TagDirectory* ExifManager::parseCIFF (const std::shared_ptr<IMFILE>& f, int base, int length)
 {
 
     TagDirectory* root = new TagDirectory (nullptr, ifdAttribs, INTEL);
@@ -1883,7 +1883,7 @@ TagDirectory* ExifManager::parseCIFF (FILE* f, int base, int length)
     return root;
 }
 
-Tag* ExifManager::saveCIFFMNTag (FILE* f, TagDirectory* root, int len, const char* name)
+Tag* ExifManager::saveCIFFMNTag (const std::shared_ptr<IMFILE>& f, TagDirectory* root, int len, const char* name)
 {
     int s = ftell (f);
     char* data = new char [len];
@@ -1896,7 +1896,7 @@ Tag* ExifManager::saveCIFFMNTag (FILE* f, TagDirectory* root, int len, const cha
     return cs;
 }
 
-void ExifManager::parseCIFF (FILE* f, int base, int length, TagDirectory* root)
+void ExifManager::parseCIFF (const std::shared_ptr<IMFILE>& f, int base, int length, TagDirectory* root)
 {
 
     char buffer[1024];
@@ -2497,7 +2497,7 @@ parse_leafdata(TagDirectory* root, ByteOrder order)
     }
 }
 
-TagDirectory* ExifManager::parse (FILE* f, int base, bool skipIgnored)
+TagDirectory* ExifManager::parse (const std::shared_ptr<IMFILE>& f, int base, bool skipIgnored)
 {
     setlocale(LC_NUMERIC, "C"); // to set decimal point in sscanf
     // read tiff header
@@ -2749,7 +2749,7 @@ TagDirectory* ExifManager::parse (FILE* f, int base, bool skipIgnored)
     return root;
 }
 
-TagDirectory* ExifManager::parseJPEG (FILE* f)
+TagDirectory* ExifManager::parseJPEG (const std::shared_ptr<IMFILE>& f)
 {
 
     fseek (f, 0, SEEK_SET);
@@ -2780,7 +2780,7 @@ TagDirectory* ExifManager::parseJPEG (FILE* f)
     return nullptr;
 }
 
-TagDirectory* ExifManager::parseTIFF (FILE* f, bool skipIgnored)
+TagDirectory* ExifManager::parseTIFF (const std::shared_ptr<IMFILE>& f, bool skipIgnored)
 {
 
     return parse (f, 0, skipIgnored);
@@ -2991,7 +2991,7 @@ int sget4 (unsigned char *s, rtexif::ByteOrder order)
     }
 }
 
-inline unsigned short get2 (FILE* f, rtexif::ByteOrder order)
+inline unsigned short get2 (const std::shared_ptr<IMFILE>& f, rtexif::ByteOrder order)
 {
 
     unsigned char str[2] = { 0xff, 0xff };
@@ -2999,7 +2999,7 @@ inline unsigned short get2 (FILE* f, rtexif::ByteOrder order)
     return rtexif::sget2 (str, order);
 }
 
-int get4 (FILE* f, rtexif::ByteOrder order)
+int get4 (const std::shared_ptr<IMFILE>& f, rtexif::ByteOrder order)
 {
 
     unsigned char str[4] = { 0xff, 0xff, 0xff, 0xff };

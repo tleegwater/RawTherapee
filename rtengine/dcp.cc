@@ -23,6 +23,7 @@
 #include "dcp.h"
 #include "iccmatrices.h"
 #include "iccstore.h"
+#include "myfile.h"
 #include "rawimagesource.h"
 #include "improcfun.h"
 #include "rt_math.h"
@@ -689,7 +690,7 @@ DCPProfile::DCPProfile(const Glib::ustring& filename) :
         1.00000f
     };
 
-    FILE* const file = g_fopen(filename.c_str(), "rb");
+    const std::shared_ptr<IMFILE> file = gfopen(filename.c_str());
 
     std::unique_ptr<TagDirectory> tagDir(ExifManager::parseTIFF(file, false));
 

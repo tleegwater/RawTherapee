@@ -16,12 +16,21 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include "myfile.h"
 #include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <string>
+
 #include <glibmm.h>
 #ifdef BZIP_SUPPORT
 #include <bzlib.h>
 #endif
+
+#include "myfile.h"
+#include "rtengine.h"
+
+#include "../rtgui/threadutils.h"
 
 // get mmap() sorted out
 #ifdef MYFILE_MMAP
@@ -64,10 +73,126 @@ int munmap(void *start, size_t length)
 #endif // WIN32
 #endif // MYFILE_MMAP
 
+
+namespace
+{
+
+class IrretrievableFileStore final
+{
+public:
+    static IrretrievableFileStore& getInstance()
+    {
+        static IrretrievableFileStore instance;
+        return instance;
+    }
+
+    void insert(const std::string& name, const std::shared_ptr<IMFILE>& file)
+    {
+        const MyMutex::MyLock lock(mutex);
+        items[name] = file;
+    }
+
+    bool get(const std::string& name, std::shared_ptr<IMFILE>& file) const
+    {
+        const MyMutex::MyLock lock(mutex);
+        const std::map<std::string, std::shared_ptr<IMFILE>>::const_iterator item = items.find(name);
+        if (item != items.end()) {
+            file = item->second;
+            file->pos = 0;
+            file->eof = false;
+            return true;
+        }
+        return false;
+    }
+
+private:
+    IrretrievableFileStore() = default;
+
+    std::map<std::string, std::shared_ptr<IMFILE>> items;
+    mutable MyMutex mutex;
+};
+
+std::shared_ptr<IMFILE> fopenStd(const char* fname)
+{
+    FILE* const f = g_fopen(fname, "rb");
+
+    if (!f) {
+        return std::shared_ptr<IMFILE>();
+    }
+
+    const std::shared_ptr<IMFILE> mf = std::make_shared<IMFILE>();
+    if (!fseek(f, 0, SEEK_END)) {
+        mf->size = ftell(f);
+        mf->data = new char[mf->size];
+        fseek(f, 0, SEEK_SET);
+        fread(mf->data, 1, mf->size, f);
+    } else {
+        mf->fd = -1;
+
+        std::string data;
+        char buf[4096];
+        size_t read = fread(buf, 1, sizeof(buf), f);
+        data.append(buf, read);
+        while (!feof(f) && read == sizeof(buf)) {
+            read = fread(buf, 1, sizeof(buf), f);
+            data.append(buf, read);
+        }
+
+        mf->size = data.size();
+        mf->data = new char[mf->size];
+        data.copy(mf->data, data.size());
+
+        IrretrievableFileStore::getInstance().insert(fname, mf);
+    }
+    fclose(f);
+    mf->pos = 0;
+    mf->eof = false;
+
+    return mf;
+}
+
+
+}
+
+IMFILE::IMFILE() :
+    fd(0),
+    pos(0),
+    size(0),
+    data(nullptr),
+    eof(0),
+    plistener(nullptr),
+    progress_range(0),
+    progress_next(0),
+    progress_current(0)
+{
+}
+
+IMFILE::~IMFILE()
+{
 #ifdef MYFILE_MMAP
 
-IMFILE* fopen (const char* fname)
+    if (fd == -1) {
+        delete[] data;
+    } else {
+        munmap((void*)data, size);
+        close(fd);
+    }
+
+#else
+    delete[] data;
+#endif
+}
+
+#ifdef MYFILE_MMAP
+
+std::shared_ptr<IMFILE> fopen(const char* fname)
 {
+    printf("get '%s'\n", fname);
+    std::shared_ptr<IMFILE> mf;
+    if (IrretrievableFileStore::getInstance().get(fname, mf)) {
+        return mf;
+    }
+
     int fd;
 
 #ifdef WIN32
@@ -87,46 +212,44 @@ IMFILE* fopen (const char* fname)
 
 #endif
 
-    if ( fd < 0 ) {
+    if (fd < 0) {
         return nullptr;
     }
 
     struct stat stat_buffer;
 
-    if ( fstat(fd, &stat_buffer) < 0 ) {
+    if (fstat(fd, &stat_buffer) < 0) {
         printf("no stat\n");
         close (fd);
         return nullptr;
     }
 
-    void* data = mmap(nullptr, stat_buffer.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    void* const data = mmap(nullptr, stat_buffer.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
-    if ( data == MAP_FAILED ) {
+    if (data == MAP_FAILED) {
         printf("no mmap\n");
         close(fd);
-        return nullptr;
+        return fopenStd(fname);
     }
 
-    IMFILE* mf = new IMFILE;
+    mf = std::make_shared<IMFILE>();
 
-    memset(mf, 0, sizeof(*mf));
     mf->fd = fd;
     mf->pos = 0;
     mf->size = stat_buffer.st_size;
-    mf->data = (char*)data;
+    mf->data = static_cast<char*>(data);
     mf->eof = false;
+
+    return mf;
+}
+
+std::shared_ptr<IMFILE> gfopen(const char* fname)
+{
+    const std::shared_ptr<IMFILE> mf = fopen(fname);
 
 #ifdef BZIP_SUPPORT
     {
-        bool bzip = false;
-        Glib::ustring bname = Glib::path_get_basename(fname);
-        size_t lastdot = bname.find_last_of ('.');
-
-        if (lastdot != bname.npos) {
-            bzip = bname.substr (lastdot).casefold() == Glib::ustring(".bz2").casefold();
-        }
-
-        if (bzip) {
+        if (rtengine::getFileExtension(fname) == "bz2") {
             int ret;
 
             // initialize bzip stream structure
@@ -198,66 +321,26 @@ IMFILE* fopen (const char* fname)
     return mf;
 }
 
-IMFILE* gfopen (const char* fname)
+#else // MYFILE_MMAP
+
+std::shared_ptr<IMFILE> fopen(const char* fname)
 {
-    return fopen(fname);
-}
-#else
-
-IMFILE* fopen (const char* fname)
-{
-
-    FILE* f = g_fopen (fname, "rb");
-
-    if (!f) {
-        return NULL;
+    printf("get '%s'\n", fname);
+    std::shared_ptr<IMFILE> mf;
+    if (IrretrievableFileStore::getInstance().get(fname, mf)) {
+        return mf;
     }
 
-    IMFILE* mf = new IMFILE;
-    memset(mf, 0, sizeof(*mf));
-    fseek (f, 0, SEEK_END);
-    mf->size = ftell (f);
-    mf->data = new char [mf->size];
-    fseek (f, 0, SEEK_SET);
-    fread (mf->data, 1, mf->size, f);
-    fclose (f);
-    mf->pos = 0;
-    mf->eof = false;
-
-    return mf;
+    return fopenStd(fname);
 }
 
-IMFILE* gfopen (const char* fname)
+std::shared_ptr<IMFILE> gfopen(const char* fname)
 {
-
-    FILE* f = g_fopen (fname, "rb");
-
-    if (!f) {
-        return NULL;
-    }
-
-    IMFILE* mf = new IMFILE;
-    memset(mf, 0, sizeof(*mf));
-    fseek (f, 0, SEEK_END);
-    mf->size = ftell (f);
-    mf->data = new char [mf->size];
-    fseek (f, 0, SEEK_SET);
-    fread (mf->data, 1, mf->size, f);
-    fclose (f);
-    mf->pos = 0;
-    mf->eof = false;
+    const std::shared_ptr<IMFILE> mf = fopen(fname);
 
 #ifdef BZIP_SUPPORT
     {
-        bool bzip = false;
-        Glib::ustring bname = Glib::path_get_basename(fname);
-        size_t lastdot = bname.find_last_of ('.');
-
-        if (lastdot != bname.npos) {
-            bzip = bname.substr (lastdot).casefold() == Glib::ustring(".bz2").casefold();
-        }
-
-        if (bzip) {
+        if (rtengine::getFileExtension(fname) == "bz2") {
             int ret;
 
             // initialize bzip stream structure
@@ -279,7 +362,7 @@ IMFILE* gfopen (const char* fname)
                 stream.avail_in = mf->size;
 
                 while (ret == BZ_OK) {
-                    buffer = static_cast<char*>( realloc(buffer, buffer_size)); // allocate/resize buffer
+                    buffer = static_cast<char*>(realloc(buffer, buffer_size)); // allocate/resize buffer
 
                     if (!buffer) {
                         free(buffer);
@@ -299,8 +382,8 @@ IMFILE* gfopen (const char* fname)
                 }
 
                 if (ret == BZ_STREAM_END) {
-                    delete [] mf->data;
-                    char* realData = new char [buffer_out_count];
+                    delete[] mf->data;
+                    char* realData = new char[buffer_out_count];
                     memcpy(realData, buffer, buffer_out_count);
 
                     mf->data = realData;
@@ -320,15 +403,14 @@ IMFILE* gfopen (const char* fname)
         }
     }
 #endif // BZIP_SUPPORT
+
     return mf;
 }
 #endif //MYFILE_MMAP
 
-IMFILE* fopen (unsigned* buf, int size)
+std::shared_ptr<IMFILE> fopen(unsigned* buf, int size)
 {
-
-    IMFILE* mf = new IMFILE;
-    memset(mf, 0, sizeof(*mf));
+    const std::shared_ptr<IMFILE> mf = std::make_shared<IMFILE>();
     mf->fd = -1;
     mf->size = size;
     mf->data = new char [mf->size];
@@ -338,29 +420,94 @@ IMFILE* fopen (unsigned* buf, int size)
     return mf;
 }
 
-void fclose (IMFILE* f)
+void fclose(const std::shared_ptr<IMFILE>& f)
 {
-#ifdef MYFILE_MMAP
-
-    if ( f->fd == -1 ) {
-        delete [] f->data;
-    } else {
-        munmap((void*)f->data, f->size);
-        close(f->fd);
-    }
-
-#else
-    delete [] f->data;
-#endif
-    delete f;
 }
 
-int fscanf (IMFILE* f, const char* s ...)
+int ftell(const std::shared_ptr<IMFILE>& f)
+{
+    return f->pos;
+}
+
+int feof(const std::shared_ptr<IMFILE>& f)
+{
+    return f->eof;
+}
+
+void fseek(const std::shared_ptr<IMFILE>& f, int p, int how)
+{
+    const int fpos = f->pos;
+
+    if (how == SEEK_SET) {
+        f->pos = p;
+    } else if (how == SEEK_CUR) {
+        f->pos += p;
+    } else if (how == SEEK_END) {
+        f->pos = f->size + p;
+    }
+
+    if (f->pos < 0  || f->pos > f->size) {
+        f->pos = fpos;
+    }
+}
+
+int fgetc(const std::shared_ptr<IMFILE>& f)
+{
+    if (f->pos < f->size) {
+        if (f->plistener && ++f->progress_current >= f->progress_next) {
+            imfile_update_progress(f);
+        }
+
+        return static_cast<unsigned char>(f->data[f->pos++]);
+    }
+
+    f->eof = true;
+    return EOF;
+}
+
+int getc(const std::shared_ptr<IMFILE>& f)
+{
+    return fgetc(f);
+}
+
+int fread(void* dst, int es, int count, const std::shared_ptr<IMFILE>& f)
+{
+    const int s = es * count;
+    const int avail = f->size - f->pos;
+
+    if (s <= avail) {
+        memcpy(dst, f->data + f->pos, s);
+        f->pos += s;
+
+        if (f->plistener) {
+            f->progress_current += s;
+
+            if (f->progress_current >= f->progress_next) {
+                imfile_update_progress(f);
+            }
+        }
+
+        return count;
+    } else {
+        memcpy(dst, f->data + f->pos, avail);
+        f->pos += avail;
+        f->eof = true;
+        return avail / es;
+    }
+}
+
+unsigned char* fdata(int offset, const std::shared_ptr<IMFILE>& f)
+{
+    return reinterpret_cast<unsigned char*>(f->data + offset);
+}
+
+int fscanf(const std::shared_ptr<IMFILE>& f, const char* s ...)
 {
     // fscanf not easily wrapped since we have no terminating \0 at end
     // of file data and vsscanf() won't tell us how many characters that
     // were parsed. However, only dcraw.cc code use it and only for "%f" and
     // "%d", so we make a dummy fscanf here just to support dcraw case.
+
     char buf[50], *endptr = nullptr;
     int copy_sz = f->size - f->pos;
 
@@ -401,9 +548,8 @@ int fscanf (IMFILE* f, const char* s ...)
 }
 
 
-char* fgets (char* s, int n, IMFILE* f)
+char* fgets(char* s, int n, const std::shared_ptr<IMFILE>& f)
 {
-
     if (f->pos >= f->size) {
         f->eof = true;
         return nullptr;
@@ -418,7 +564,7 @@ char* fgets (char* s, int n, IMFILE* f)
     return s;
 }
 
-void imfile_set_plistener(IMFILE *f, rtengine::ProgressListener *plistener, double progress_range)
+void imfile_set_plistener(const std::shared_ptr<IMFILE>& f, rtengine::ProgressListener *plistener, double progress_range)
 {
     f->plistener = plistener;
     f->progress_range = progress_range;
@@ -426,7 +572,7 @@ void imfile_set_plistener(IMFILE *f, rtengine::ProgressListener *plistener, doub
     f->progress_current = 0;
 }
 
-void imfile_update_progress(IMFILE *f)
+void imfile_update_progress(const std::shared_ptr<IMFILE>& f)
 {
     if (!f->plistener || f->progress_current < f->progress_next) {
         return;

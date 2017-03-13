@@ -21,6 +21,7 @@
 #define DCRAW_H
 
 #include "myfile.h"
+#include "rtengine.h"
 #include <csetjmp>
 
 
@@ -72,7 +73,7 @@ public:
     //int main (int argc, const char **argv);
 protected:
     int exif_base, ciff_base, ciff_len;
-    IMFILE *ifp;
+    std::shared_ptr<IMFILE> ifp;
     FILE *ofp;
     short order;
     const char *ifname;
@@ -123,7 +124,7 @@ protected:
         int         cur_buf_size;    // buffer size
         uchar       *cur_buf;        // currently read block
         int         fillbytes;          // Counter to add extra byte for block size N*16
-        IMFILE      *input;
+        std::shared_ptr<IMFILE> input;
         struct int_pair grad_even[3][41];    // tables of gradients
         struct int_pair grad_odd[3][41];
         ushort		*linealloc;
@@ -237,7 +238,7 @@ void parse_redcine();
 class getbithuff_t
 {
 public:
-   getbithuff_t(DCraw *p,IMFILE *&i, unsigned &z):parent(p),bitbuf(0),vbits(0),reset(0),ifp(i),zero_after_ff(z){}
+   getbithuff_t(DCraw *p, const std::shared_ptr<IMFILE>& i, unsigned &z):parent(p),bitbuf(0),vbits(0),reset(0),ifp(i),zero_after_ff(z){}
    unsigned operator()(int nbits, ushort *huff);
 
 private:
@@ -247,7 +248,7 @@ private:
    DCraw *parent;
    unsigned bitbuf;
    int vbits, reset;
-   IMFILE *&ifp;
+   const std::shared_ptr<IMFILE>& ifp;
    unsigned &zero_after_ff;
 };
 getbithuff_t getbithuff;
@@ -316,7 +317,7 @@ void parse_qt (int end);
 // ph1_bithuff(int nbits, ushort *huff);
 class ph1_bithuff_t {
 public:
-   ph1_bithuff_t(DCraw *p,IMFILE *&i,short &o):parent(p),order(o),ifp(i),bitbuf(0),vbits(0){}
+   ph1_bithuff_t(DCraw *p, const std::shared_ptr<IMFILE>& i,short &o):parent(p),order(o),ifp(i),bitbuf(0),vbits(0){}
    unsigned operator()(int nbits, ushort *huff);
 private:
    unsigned get4(){
@@ -324,7 +325,7 @@ private:
    }
    DCraw *parent;
    short &order;
-   IMFILE *&ifp;
+   const std::shared_ptr<IMFILE>& ifp;
    UINT64 bitbuf;
    int vbits;
 };
@@ -344,10 +345,10 @@ void nokia_load_raw();
 // pana_bits(int nbits);
 class pana_bits_t{
 public:
-   pana_bits_t(IMFILE *&i,unsigned &u):ifp(i),load_flags(u){}
+   pana_bits_t(const std::shared_ptr<IMFILE>& i,unsigned &u):ifp(i),load_flags(u){}
    unsigned operator()(int nbits);
 private:
-   IMFILE *&ifp;
+   const std::shared_ptr<IMFILE>& ifp;
    unsigned &load_flags;
    uchar buf[0x4000];
    int vbits;

@@ -274,7 +274,7 @@ public:
     {
         return profile_data;
     }
-    IMFILE *get_file() const
+    const std::shared_ptr<IMFILE>& get_file() const
     {
         return ifp;
     }

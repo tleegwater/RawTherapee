@@ -16,13 +16,19 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef _MYFILE_
-#define _MYFILE_
+#pragma once
+
+#include <memory>
 
 #include <glib/gstdio.h>
-#include <cstdio>
-#include <cstring>
-#include "rtengine.h"
+
+namespace rtengine
+{
+
+    class ProgressListener;
+
+}
+
 struct IMFILE {
     int fd;
     ssize_t pos;
@@ -33,6 +39,9 @@ struct IMFILE {
     double progress_range;
     ssize_t progress_next;
     ssize_t progress_current;
+
+    IMFILE();
+    ~IMFILE();
 };
 
 /*
@@ -40,97 +49,23 @@ struct IMFILE {
   Note: progress bar is not intended to be exact, eg if you read same data over and over again progress
   will potentially reach 100% before you're finished.
  */
-void imfile_set_plistener(IMFILE *f, rtengine::ProgressListener *plistener, double progress_range);
-void imfile_update_progress(IMFILE *f);
+void imfile_set_plistener(const std::shared_ptr<IMFILE>& f, rtengine::ProgressListener *plistener, double progress_range);
+void imfile_update_progress(const std::shared_ptr<IMFILE>& f);
 
-IMFILE* fopen (const char* fname);
-IMFILE* gfopen (const char* fname);
-IMFILE* fopen (unsigned* buf, int size);
-void fclose (IMFILE* f);
-inline int ftell (IMFILE* f)
-{
+std::shared_ptr<IMFILE> fopen(const char* fname);
+std::shared_ptr<IMFILE> gfopen(const char* fname);
+std::shared_ptr<IMFILE> fopen(unsigned* buf, int size);
+void fclose(const std::shared_ptr<IMFILE>& f);
 
-    return f->pos;
-}
+int ftell(const std::shared_ptr<IMFILE>& f);
+int feof(const std::shared_ptr<IMFILE>& f);
+void fseek(const std::shared_ptr<IMFILE>& f, int p, int how);
 
-inline int feof (IMFILE* f)
-{
+int fgetc(const std::shared_ptr<IMFILE>& f);
+int getc(const std::shared_ptr<IMFILE>& f);
 
-    return f->eof;
-}
+int fread(void* dst, int es, int count, const std::shared_ptr<IMFILE>& f);
+unsigned char* fdata(int offset, const std::shared_ptr<IMFILE>& f);
 
-inline void fseek (IMFILE* f, int p, int how)
-{
-    int fpos = f->pos;
-
-    if (how == SEEK_SET) {
-        f->pos = p;
-    } else if (how == SEEK_CUR) {
-        f->pos += p;
-    } else if (how == SEEK_END) {
-        f->pos = f->size + p;
-    }
-
-    if (f->pos < 0  || f->pos > f->size) {
-        f->pos = fpos;
-    }
-}
-
-inline int fgetc (IMFILE* f)
-{
-
-    if (LIKELY(f->pos < f->size)) {
-        if (f->plistener && ++f->progress_current >= f->progress_next) {
-            imfile_update_progress(f);
-        }
-
-        return (unsigned char)f->data[f->pos++];
-    }
-
-    f->eof = true;
-    return EOF;
-}
-
-inline int getc (IMFILE* f)
-{
-
-    return fgetc(f);
-}
-
-inline int fread (void* dst, int es, int count, IMFILE* f)
-{
-
-    int s = es * count;
-    int avail = f->size - f->pos;
-
-    if (s <= avail) {
-        memcpy (dst, f->data + f->pos, s);
-        f->pos += s;
-
-        if (f->plistener) {
-            f->progress_current += s;
-
-            if (f->progress_current >= f->progress_next) {
-                imfile_update_progress(f);
-            }
-        }
-
-        return count;
-    } else {
-        memcpy (dst, f->data + f->pos, avail);
-        f->pos += avail;
-        f->eof = true;
-        return avail / es;
-    }
-}
-
-inline unsigned char* fdata(int offset, IMFILE* f)
-{
-    return (unsigned char*)f->data + offset;
-}
-
-int fscanf (IMFILE* f, const char* s ...);
-char* fgets (char* s, int n, IMFILE* f);
-
-#endif
-
+int fscanf(const std::shared_ptr<IMFILE>& f, const char* s ...);
+char* fgets(char* s, int n, const std::shared_ptr<IMFILE>& f);

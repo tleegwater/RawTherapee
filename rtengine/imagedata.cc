@@ -21,6 +21,7 @@
 
 #include "imagedata.h"
 #include "iptcpairs.h"
+#include "myfile.h"
 
 using namespace rtengine;
 
@@ -52,7 +53,7 @@ ImageData::ImageData (Glib::ustring fname, RawMetaDataLocation* ri) : iso_speed(
     iptc = nullptr;
 
     if (ri && (ri->exifBase >= 0 || ri->ciffBase >= 0)) {
-        FILE* f = g_fopen (fname.c_str (), "rb");
+        std::shared_ptr<IMFILE> f = gfopen (fname.c_str ());
 
         if (f) {
             if (ri->exifBase >= 0) {
@@ -73,7 +74,7 @@ ImageData::ImageData (Glib::ustring fname, RawMetaDataLocation* ri) : iso_speed(
             extractInfo ();
         }
     } else if (hasJpegExtension(fname)) {
-        FILE* f = g_fopen (fname.c_str (), "rb");
+        std::shared_ptr<IMFILE> f = gfopen (fname.c_str ());
 
         if (f) {
             root = rtexif::ExifManager::parseJPEG (f);
@@ -84,7 +85,7 @@ ImageData::ImageData (Glib::ustring fname, RawMetaDataLocation* ri) : iso_speed(
             fclose (ff);
         }
     } else if (hasTiffExtension(fname)) {
-        FILE* f = g_fopen (fname.c_str (), "rb");
+        std::shared_ptr<IMFILE> f = gfopen (fname.c_str ());
 
         if (f) {
             root = rtexif::ExifManager::parseTIFF (f);

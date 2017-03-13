@@ -289,10 +289,13 @@ int main(int argc, char **argv)
 
     simpleEditor = false;
 
-    if( !argv1.empty() )
-        if( Glib::file_test(argv1, Glib::FILE_TEST_EXISTS) && !Glib::file_test(argv1, Glib::FILE_TEST_IS_DIR)) {
-            simpleEditor = true;
-        }
+    if (
+        !argv1.empty()
+        && Glib::file_test(argv1, Glib::FILE_TEST_EXISTS)
+        && !Glib::file_test(argv1, Glib::FILE_TEST_IS_DIR)
+    ) {
+        simpleEditor = true;
+    }
 
     Gtk::Main m(&argc, &argv);
 
@@ -543,7 +546,7 @@ int processLineParams( int argc, char **argv )
 
                     const auto argument = fname_to_utf8 (argv[iArg]);
 
-                    if (Glib::file_test (argument, Glib::FILE_TEST_IS_REGULAR)) {
+                    if (Glib::file_test(argument, Glib::FILE_TEST_EXISTS) && !Glib::file_test(argument, Glib::FILE_TEST_IS_DIR)) {
                         inputFiles.emplace_back (argument);
                         continue;
                     }

@@ -5685,7 +5685,7 @@ int CLASS parse_tiff_ifd (int base)
   unsigned sony_curve[] = { 0,0,0,0,0,4095 };
   unsigned *buf, sony_offset=0, sony_length=0, sony_key=0;
   struct jhead jh;
-/*RT*/  IMFILE *sfp;
+/*RT*/  std::shared_ptr<IMFILE> sfp;
 
   if (tiff_nifds >= sizeof tiff_ifd / sizeof tiff_ifd[0])
     return 1;
@@ -6436,7 +6436,7 @@ void CLASS parse_external_jpeg()
 {
   const char *file, *ext;
   char *jname, *jfile, *jext;
-/*RT*/  IMFILE *save=ifp;
+/*RT*/  std::shared_ptr<IMFILE> save=ifp;
 
   ext  = strrchr (ifname, '.');
   file = strrchr (ifname, '/');

@@ -30,6 +30,7 @@
 #include <glibmm.h>
 
 #include "../rtengine/procparams.h"
+#include "../rtengine/myfile.h"
 #include "../rtengine/noncopyable.h"
 
 class CacheImageData;
@@ -58,8 +59,8 @@ bool extractLensInfo(std::string &fullname, double &minFocal, double &maxFocal, 
 
 unsigned short sget2 (unsigned char *s, ByteOrder order);
 int sget4 (unsigned char *s, ByteOrder order);
-inline unsigned short get2 (FILE* f, ByteOrder order);
-inline int get4 (FILE* f, ByteOrder order);
+inline unsigned short get2 (const std::shared_ptr<IMFILE>& f, ByteOrder order);
+inline int get4 (const std::shared_ptr<IMFILE>& f, ByteOrder order);
 inline void sset2 (unsigned short v, unsigned char *s, ByteOrder order);
 inline void sset4 (int v, unsigned char *s, ByteOrder order);
 inline float int_to_float (int i);
@@ -107,7 +108,7 @@ protected:
 
 public:
     TagDirectory ();
-    TagDirectory (TagDirectory* p, FILE* f, int base, const TagAttrib* ta, ByteOrder border, bool skipIgnored = true);
+    TagDirectory (TagDirectory* p, const std::shared_ptr<IMFILE>& f, int base, const TagAttrib* ta, ByteOrder border, bool skipIgnored = true);
     TagDirectory (TagDirectory* p, const TagAttrib* ta, ByteOrder border);
     virtual ~TagDirectory ();
 
@@ -172,7 +173,7 @@ protected:
 public:
     TagDirectoryTable();
     TagDirectoryTable (TagDirectory* p, unsigned char *v, int memsize, int offs, TagType type, const TagAttrib* ta, ByteOrder border);
-    TagDirectoryTable (TagDirectory* p, FILE* f, int memsize, int offset, TagType type, const TagAttrib* ta, ByteOrder border);
+    TagDirectoryTable (TagDirectory* p, const std::shared_ptr<IMFILE>& f, int memsize, int offset, TagType type, const TagAttrib* ta, ByteOrder border);
     virtual ~TagDirectoryTable();
     virtual int calculateSize ();
     virtual int write (int start, unsigned char* buffer);
@@ -197,10 +198,10 @@ protected:
     TagDirectory*    parent;
     TagDirectory**   directory;
     MNKind           makerNoteKind;
-    bool             parseMakerNote(FILE* f, int base, ByteOrder bom );
+    bool             parseMakerNote(const std::shared_ptr<IMFILE>& f, int base, ByteOrder bom );
 
 public:
-    Tag (TagDirectory* parent, FILE* f, int base);                          // parse next tag from the file
+    Tag (TagDirectory* parent, const std::shared_ptr<IMFILE>& f, int base);                          // parse next tag from the file
     Tag (TagDirectory* parent, const TagAttrib* attr);
     Tag (TagDirectory* parent, const TagAttrib* attr, unsigned char *data, TagType t);
     Tag (TagDirectory* parent, const TagAttrib* attr, int data, TagType t);  // create a new tag from array (used
@@ -309,13 +310,13 @@ public:
 class ExifManager
 {
 
-    static Tag* saveCIFFMNTag (FILE* f, TagDirectory* root, int len, const char* name);
+    static Tag* saveCIFFMNTag (const std::shared_ptr<IMFILE>& f, TagDirectory* root, int len, const char* name);
 public:
-    static TagDirectory* parse (FILE*f, int base, bool skipIgnored = true);
-    static TagDirectory* parseJPEG (FILE*f);
-    static TagDirectory* parseTIFF (FILE*f, bool skipIgnored = true);
-    static TagDirectory* parseCIFF (FILE* f, int base, int length);
-    static void          parseCIFF (FILE* f, int base, int length, TagDirectory* root);
+    static TagDirectory* parse (const std::shared_ptr<IMFILE>& f, int base, bool skipIgnored = true);
+    static TagDirectory* parseJPEG (const std::shared_ptr<IMFILE>& f);
+    static TagDirectory* parseTIFF (const std::shared_ptr<IMFILE>& f, bool skipIgnored = true);
+    static TagDirectory* parseCIFF (const std::shared_ptr<IMFILE>& f, int base, int length);
+    static void          parseCIFF (const std::shared_ptr<IMFILE>& f, int base, int length, TagDirectory* root);
 
     /// @brief Get default tag for TIFF
     /// @param forthis The byte order will be taken from the given directory.
