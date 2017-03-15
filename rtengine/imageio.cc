@@ -1410,6 +1410,223 @@ int ImageIO::saveTIFF (Glib::ustring fname, int bps, bool uncompressed)
     }
 }
 
+int ImageIO::saveJPEG2000 (Glib::ustring fname, int bps, bool uncompressed)
+{
+    if (getW() < 1 || getH() < 1) {
+        return IMIO_HEADERERROR;
+    }
+
+    //TODO: Handling 32 bits floating point output images!
+    bool writeOk = true;
+    int width = getW ();
+    int height = getH ();
+
+    if (bps < 0) {
+        bps = getBPS ();
+    }
+
+    int lineWidth = width * 3 * bps / 8;
+    unsigned char* linebuffer = new unsigned char[lineWidth];
+
+// TODO the following needs to be looked into - do we really need two ways to write a Tiff file ?
+    if (exifRoot && uncompressed) {
+        FILE *file = g_fopen_withBinaryAndLock (fname);
+
+        if (!file) {
+            delete [] linebuffer;
+            return IMIO_CANNOTWRITEFILE;
+        }
+
+        if (pl) {
+            pl->setProgressStr ("PROGRESSBAR_SAVETIFF");
+            pl->setProgress (0.0);
+        }
+
+        // buffer for the exif and iptc
+        unsigned int bufferSize;
+        unsigned char* buffer = nullptr; // buffer will be allocated in createTIFFHeader
+        unsigned char* iptcdata = nullptr;
+        unsigned int iptclen = 0;
+
+        if (iptc && iptc_data_save (iptc, &iptcdata, &iptclen) && iptcdata) {
+            iptc_data_free_buf (iptc, iptcdata);
+            iptcdata = nullptr;
+        }
+
+        int size = rtexif::ExifManager::createTIFFHeader (exifRoot, exifChange, width, height, bps, profileData, profileLength, (char*)iptcdata, iptclen, buffer, bufferSize);
+
+        if (iptcdata) {
+            iptc_data_free_buf (iptc, iptcdata);
+        }
+
+        // The maximum lenght is strangely not the same than for the JPEG file...
+        // Which maximum length is the good one ?
+        if (size > 0 && size <= bufferSize) {
+            fwrite (buffer, size, 1, file);
+        }
+
+#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
+        bool needsReverse = bps == 16 && exifRoot->getOrder() == rtexif::MOTOROLA;
+#else
+        bool needsReverse = bps == 16 && exifRoot->getOrder() == rtexif::INTEL;
+#endif
+
+        for (int i = 0; i < height; i++) {
+            getScanline (i, linebuffer, bps);
+
+            if (needsReverse)
+                for (int i = 0; i < lineWidth; i += 2) {
+                    char c = linebuffer[i];
+                    linebuffer[i] = linebuffer[i + 1];
+                    linebuffer[i + 1] = c;
+                }
+
+            fwrite (linebuffer, lineWidth, 1, file);
+
+            if (pl && !(i % 100)) {
+                pl->setProgress ((double)(i + 1) / height);
+            }
+        }
+
+        if(buffer) {
+            delete [] buffer;
+        }
+
+        if (ferror(file)) {
+            writeOk = false;
+        }
+
+        fclose (file);
+    } else {
+        // little hack to get libTiff to use proper byte order (see TIFFClienOpen()):
+        const char *mode = !exifRoot ? "w" : (exifRoot->getOrder() == rtexif::INTEL ? "wl" : "wb");
+#ifdef WIN32
+        FILE *file = g_fopen_withBinaryAndLock (fname);
+        int fileno = _fileno(file);
+        int osfileno = _get_osfhandle(fileno);
+        TIFF* out = TIFFFdOpen (osfileno, fname.c_str(), mode);
+#else
+        TIFF* out = TIFFOpen(fname.c_str(), mode);
+        int fileno = TIFFFileno (out);
+#endif
+
+        if (!out) {
+            delete [] linebuffer;
+            return IMIO_CANNOTWRITEFILE;
+        }
+
+        if (pl) {
+            pl->setProgressStr ("PROGRESSBAR_SAVETIFF");
+            pl->setProgress (0.0);
+        }
+
+        if (exifRoot) {
+            rtexif::Tag *tag = exifRoot->getTag (TIFFTAG_EXIFIFD);
+
+            if (tag && tag->isDirectory()) {
+                rtexif::TagDirectory *exif = tag->getDirectory();
+
+                if (exif)   {
+                    int exif_size = exif->calculateSize();
+                    unsigned char *buffer = new unsigned char[exif_size + 8];
+                    // TIFFOpen writes out the header and sets file pointer at position 8
+
+                    exif->write (8, buffer);
+
+                    write (fileno, buffer + 8, exif_size);
+
+                    delete [] buffer;
+                    // let libtiff know that scanlines or any other following stuff should go
+                    // at a different offset:
+                    TIFFSetWriteOffset (out, exif_size + 8);
+                    TIFFSetField (out, TIFFTAG_EXIFIFD, 8);
+                }
+            }
+
+//TODO Even though we are saving EXIF IFD - MakerNote still comes out screwed.
+
+            if ((tag = exifRoot->getTag (TIFFTAG_MODEL)) != nullptr) {
+                TIFFSetField (out, TIFFTAG_MODEL, tag->getValue());
+            }
+
+            if ((tag = exifRoot->getTag (TIFFTAG_MAKE)) != nullptr) {
+                TIFFSetField (out, TIFFTAG_MAKE, tag->getValue());
+            }
+
+            if ((tag = exifRoot->getTag (TIFFTAG_DATETIME)) != nullptr) {
+                TIFFSetField (out, TIFFTAG_DATETIME, tag->getValue());
+            }
+
+            if ((tag = exifRoot->getTag (TIFFTAG_ARTIST)) != nullptr) {
+                TIFFSetField (out, TIFFTAG_ARTIST, tag->getValue());
+            }
+
+            if ((tag = exifRoot->getTag (TIFFTAG_COPYRIGHT)) != nullptr) {
+                TIFFSetField (out, TIFFTAG_COPYRIGHT, tag->getValue());
+            }
+
+        }
+
+        TIFFSetField (out, TIFFTAG_SOFTWARE, "RawTherapee " RTVERSION);
+        TIFFSetField (out, TIFFTAG_IMAGEWIDTH, width);
+        TIFFSetField (out, TIFFTAG_IMAGELENGTH, height);
+        TIFFSetField (out, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+        TIFFSetField (out, TIFFTAG_SAMPLESPERPIXEL, 3);
+        TIFFSetField (out, TIFFTAG_ROWSPERSTRIP, height);
+        TIFFSetField (out, TIFFTAG_BITSPERSAMPLE, bps);
+        TIFFSetField (out, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+        TIFFSetField (out, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+        TIFFSetField (out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+        TIFFSetField (out, TIFFTAG_COMPRESSION, uncompressed ? COMPRESSION_NONE : COMPRESSION_DEFLATE);
+
+        if (!uncompressed) {
+            TIFFSetField (out, TIFFTAG_PREDICTOR, PREDICTOR_NONE);
+        }
+
+        if (profileData) {
+            TIFFSetField (out, TIFFTAG_ICCPROFILE, profileLength, profileData);
+        }
+
+        for (int row = 0; row < height; row++) {
+            getScanline (row, linebuffer, bps);
+
+            if (TIFFWriteScanline (out, linebuffer, row, 0) < 0) {
+                TIFFClose (out);
+                delete [] linebuffer;
+                return IMIO_CANNOTWRITEFILE;
+            }
+
+            if (pl && !(row % 100)) {
+                pl->setProgress ((double)(row + 1) / height);
+            }
+        }
+
+        if (TIFFFlush(out) != 1) {
+            writeOk = false;
+        }
+
+        TIFFClose (out);
+#ifdef WIN32
+        fclose (file);
+#endif
+    }
+
+    delete [] linebuffer;
+
+    if (pl) {
+        pl->setProgressStr ("PROGRESSBAR_READY");
+        pl->setProgress (1.0);
+    }
+
+    if(writeOk) {
+        return IMIO_SUCCESS;
+    } else {
+        g_remove (fname.c_str());
+        return IMIO_CANNOTWRITEFILE;
+    }
+}
+
+
 // PNG read and write routines:
 
 void png_read_data(png_structp png_ptr, png_bytep data, png_size_t length)

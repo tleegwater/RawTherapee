@@ -163,6 +163,7 @@ public:
     int savePNG  (Glib::ustring fname, int compression = -1, volatile int bps = -1);
     int saveJPEG (Glib::ustring fname, int quality = 100, int subSamp = 3);
     int saveTIFF (Glib::ustring fname, int bps = -1, bool uncompressed = false);
+    int saveJPEG2000 (Glib::ustring fname, int bps = -1, bool uncompressed = false);
 
     cmsHPROFILE getEmbeddedProfile ()
     {

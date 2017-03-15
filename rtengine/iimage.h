@@ -1743,6 +1743,11 @@ public:
       * @param bps can be 8 or 16 depending on the bits per pixels the output file will have
         @return the error code, 0 if none */
     virtual int saveAsTIFF (Glib::ustring fname, int bps = -1, bool uncompressed = false) = 0;
+    /** @brief Saves the image to file in a j2k format.
+      * @param fname is the name of the file
+      * @param bps can be 8 or 16 depending on the bits per pixels the output file will have
+        @return the error code, 0 if none */
+    virtual int saveAsJPEG2000 (Glib::ustring fname, int bps = -1, bool uncompressed = false) = 0;
     /** @brief Sets the progress listener if you want to follow the progress of the image saving operations (optional).
       * @param pl is the pointer to the class implementing the ProgressListener interface */
     virtual void setSaveProgressListener (ProgressListener* pl) = 0;

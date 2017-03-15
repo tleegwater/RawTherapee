@@ -510,6 +510,10 @@ int processLineParams( int argc, char **argv )
                 compression = ((argv[iArg][2] != 'z') ? 0 : 1);
                 break;
 
+            case '2':
+                outputType = "j2k";
+                break;
+
             case 'n':
                 outputType = "png";
                 compression = -1;
@@ -670,6 +674,8 @@ int processLineParams( int argc, char **argv )
             } else if (outputType == "tif") {
                 options.saveFormat.format = outputType;
             } else if (outputType == "png") {
+                options.saveFormat.format = outputType;
+            } else if (outputType == "j2k") {
                 options.saveFormat.format = outputType;
             }
 
@@ -837,6 +843,8 @@ int processLineParams( int argc, char **argv )
             errorCode = resultImage->saveAsJPEG( outputFile, compression, subsampling );
         } else if( outputType == "tif" ) {
             errorCode = resultImage->saveAsTIFF( outputFile, bits, compression == 0  );
+        } else if( outputType == "j2k" ) {
+            errorCode = resultImage->saveAsJPEG2000( outputFile, bits, compression == 0 );
         } else if( outputType == "png" ) {
             errorCode = resultImage->saveAsPNG( outputFile, compression, bits );
         } else {
