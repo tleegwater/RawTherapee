@@ -1435,188 +1435,149 @@ int ImageIO::saveJPEG2000 (Glib::ustring fname, int bps, bool uncompressed)
     int lineWidth = width * 3 * bps / 8;
     unsigned char* linebuffer = new unsigned char[lineWidth];
 
-// TODO the following needs to be looked into - do we really need two ways to write a Tiff file ?
-    if (exifRoot && uncompressed) {
-        FILE *file = g_fopen_withBinaryAndLock (fname);
 
-        if (!file) {
-            delete [] linebuffer;
-            return IMIO_CANNOTWRITEFILE;
-        }
+    uint16 num_components = 3; //is always 3 in rt
 
-        if (pl) {
-            pl->setProgressStr ("PROGRESSBAR_SAVETIFF");
-            pl->setProgress (0.0);
-        }
+    std::cout << width << "x" << height << "x" << num_components << "x" << bps << std::endl;
+        
+    //start a stopwatch
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
+        
+    //declare jp2 file
+    jp2_family_tgt tgt;
+    tgt.open(fname.c_str());
+        
+    //declare jp2 box
+    jp2_target jp2_out; 
+    jp2_out.open(&tgt);
+        
+    //set codestream params
+    siz_params *codestream_parameters = new siz_params();
+    
+    codestream_parameters->set(Scomponents, 0, 0, (int)num_components);
+    codestream_parameters->set(Sdims, 0, 0, (int)height);
+    codestream_parameters->set(Sdims, 0, 1, (int)width);
+    codestream_parameters->set(Sprecision, 0, 0, (int)bps);
+    //codestream_parameters->set(Stiles, 0, 0, 1024);
+    //codestream_parameters->set(Stiles, 0, 1, 1024);
+    codestream_parameters->set(Ssigned, 0, 0, false);
+         
+    //fill in the remaining parameters
+    codestream_parameters->finalize_all();
+        
+    //neccesary for jp2 format    
+    jp2_dimensions dimensions = jp2_out.access_dimensions();
+    dimensions.init(codestream_parameters);
+    dimensions.finalize_compatibility(codestream_parameters);
+    
+    //attach color profile
+    jp2_colour colour = jp2_out.access_colour();
+    colour.init((const kdu_byte *)profileData);
+    
+    //neccesary for jp2 format    
+    jp2_resolution resolutions = jp2_out.access_resolution();
+        
+    jp2_out.write_header();
 
-        // buffer for the exif and iptc
-        unsigned int bufferSize;
-        unsigned char* buffer = nullptr; // buffer will be allocated in createTIFFHeader
-        unsigned char* iptcdata = nullptr;
-        unsigned int iptclen = 0;
+    // buffer for the exif and iptc
+    unsigned int bufferSize;
+    unsigned char* buffer = nullptr; // buffer will be allocated in createTIFFHeader
+    unsigned char* iptcdata = nullptr;
+    unsigned int iptclen = 0;
 
-        if (iptc && iptc_data_save (iptc, &iptcdata, &iptclen) && iptcdata) {
-            iptc_data_free_buf (iptc, iptcdata);
-            iptcdata = nullptr;
-        }
-
-        int size = rtexif::ExifManager::createTIFFHeader (exifRoot, exifChange, width, height, bps, profileData, profileLength, (char*)iptcdata, iptclen, buffer, bufferSize);
-
-        if (iptcdata) {
-            iptc_data_free_buf (iptc, iptcdata);
-        }
-
-        // The maximum lenght is strangely not the same than for the JPEG file...
-        // Which maximum length is the good one ?
-        if (size > 0 && size <= bufferSize) {
-            fwrite (buffer, size, 1, file);
-        }
-
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-        bool needsReverse = bps == 16 && exifRoot->getOrder() == rtexif::MOTOROLA;
-#else
-        bool needsReverse = bps == 16 && exifRoot->getOrder() == rtexif::INTEL;
-#endif
-
-        for (int i = 0; i < height; i++) {
-            getScanline (i, linebuffer, bps);
-
-            if (needsReverse)
-                for (int i = 0; i < lineWidth; i += 2) {
-                    char c = linebuffer[i];
-                    linebuffer[i] = linebuffer[i + 1];
-                    linebuffer[i + 1] = c;
-                }
-
-            fwrite (linebuffer, lineWidth, 1, file);
-
-            if (pl && !(i % 100)) {
-                pl->setProgress ((double)(i + 1) / height);
-            }
-        }
-
-        if(buffer) {
-            delete [] buffer;
-        }
-
-        if (ferror(file)) {
-            writeOk = false;
-        }
-
-        fclose (file);
-    } else {
-        // little hack to get libTiff to use proper byte order (see TIFFClienOpen()):
-        const char *mode = !exifRoot ? "w" : (exifRoot->getOrder() == rtexif::INTEL ? "wl" : "wb");
-#ifdef WIN32
-        FILE *file = g_fopen_withBinaryAndLock (fname);
-        int fileno = _fileno(file);
-        int osfileno = _get_osfhandle(fileno);
-        TIFF* out = TIFFFdOpen (osfileno, fname.c_str(), mode);
-#else
-        TIFF* out = TIFFOpen(fname.c_str(), mode);
-        int fileno = TIFFFileno (out);
-#endif
-
-        if (!out) {
-            delete [] linebuffer;
-            return IMIO_CANNOTWRITEFILE;
-        }
-
-        if (pl) {
-            pl->setProgressStr ("PROGRESSBAR_SAVETIFF");
-            pl->setProgress (0.0);
-        }
-
-        if (exifRoot) {
-            rtexif::Tag *tag = exifRoot->getTag (TIFFTAG_EXIFIFD);
-
-            if (tag && tag->isDirectory()) {
-                rtexif::TagDirectory *exif = tag->getDirectory();
-
-                if (exif)   {
-                    int exif_size = exif->calculateSize();
-                    unsigned char *buffer = new unsigned char[exif_size + 8];
-                    // TIFFOpen writes out the header and sets file pointer at position 8
-
-                    exif->write (8, buffer);
-
-                    write (fileno, buffer + 8, exif_size);
-
-                    delete [] buffer;
-                    // let libtiff know that scanlines or any other following stuff should go
-                    // at a different offset:
-                    TIFFSetWriteOffset (out, exif_size + 8);
-                    TIFFSetField (out, TIFFTAG_EXIFIFD, 8);
-                }
-            }
-
-//TODO Even though we are saving EXIF IFD - MakerNote still comes out screwed.
-
-            if ((tag = exifRoot->getTag (TIFFTAG_MODEL)) != nullptr) {
-                TIFFSetField (out, TIFFTAG_MODEL, tag->getValue());
-            }
-
-            if ((tag = exifRoot->getTag (TIFFTAG_MAKE)) != nullptr) {
-                TIFFSetField (out, TIFFTAG_MAKE, tag->getValue());
-            }
-
-            if ((tag = exifRoot->getTag (TIFFTAG_DATETIME)) != nullptr) {
-                TIFFSetField (out, TIFFTAG_DATETIME, tag->getValue());
-            }
-
-            if ((tag = exifRoot->getTag (TIFFTAG_ARTIST)) != nullptr) {
-                TIFFSetField (out, TIFFTAG_ARTIST, tag->getValue());
-            }
-
-            if ((tag = exifRoot->getTag (TIFFTAG_COPYRIGHT)) != nullptr) {
-                TIFFSetField (out, TIFFTAG_COPYRIGHT, tag->getValue());
-            }
-
-        }
-
-        TIFFSetField (out, TIFFTAG_SOFTWARE, "RawTherapee " RTVERSION);
-        TIFFSetField (out, TIFFTAG_IMAGEWIDTH, width);
-        TIFFSetField (out, TIFFTAG_IMAGELENGTH, height);
-        TIFFSetField (out, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
-        TIFFSetField (out, TIFFTAG_SAMPLESPERPIXEL, 3);
-        TIFFSetField (out, TIFFTAG_ROWSPERSTRIP, height);
-        TIFFSetField (out, TIFFTAG_BITSPERSAMPLE, bps);
-        TIFFSetField (out, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
-        TIFFSetField (out, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
-        TIFFSetField (out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
-        TIFFSetField (out, TIFFTAG_COMPRESSION, uncompressed ? COMPRESSION_NONE : COMPRESSION_DEFLATE);
-
-        if (!uncompressed) {
-            TIFFSetField (out, TIFFTAG_PREDICTOR, PREDICTOR_NONE);
-        }
-
-        if (profileData) {
-            TIFFSetField (out, TIFFTAG_ICCPROFILE, profileLength, profileData);
-        }
-
-        for (int row = 0; row < height; row++) {
-            getScanline (row, linebuffer, bps);
-
-            if (TIFFWriteScanline (out, linebuffer, row, 0) < 0) {
-                TIFFClose (out);
-                delete [] linebuffer;
-                return IMIO_CANNOTWRITEFILE;
-            }
-
-            if (pl && !(row % 100)) {
-                pl->setProgress ((double)(row + 1) / height);
-            }
-        }
-
-        if (TIFFFlush(out) != 1) {
-            writeOk = false;
-        }
-
-        TIFFClose (out);
-#ifdef WIN32
-        fclose (file);
-#endif
+    if (iptc && iptc_data_save (iptc, &iptcdata, &iptclen) && iptcdata) {
+        iptc_data_free_buf (iptc, iptcdata);
+        iptcdata = nullptr;
     }
+
+    int size = rtexif::ExifManager::createTIFFHeader (exifRoot, exifChange, width, height, bps, NULL, NULL, (char*)iptcdata, iptclen, buffer, bufferSize);
+
+    if (iptcdata) {
+        iptc_data_free_buf (iptc, iptcdata);
+    }
+            
+    //set exif data to the exif box
+    static kdu_byte exif_uuid[] = {'J', 'p', 'g', 'T', 'i', 'f', 'f', 'E', 'x', 'i', 'f', '-', '>', 'J', 'P', '2'};
+    jp2_output_box jp2_out_box;
+    jp2_out_box.open(&tgt, jp2_uuid_4cc);
+    jp2_out_box.set_target_size(bufferSize + sizeof(exif_uuid));
+    jp2_out_box.write(exif_uuid, sizeof(exif_uuid));
+    jp2_out_box.write((kdu_byte *) buffer, bufferSize);
+    jp2_out_box.close();
+        
+    
+    //initialize multithreading
+    int num_threads = std::thread::hardware_concurrency();
+    kdu_thread_env env, *env_ref = nullptr;
+    if (num_threads > 0) {
+        env.create();
+        for (int nt = 1; nt < num_threads; nt++) {
+            if (!env.add_thread()) num_threads = nt; // Unable to create all the threads requested
+        }
+        env_ref = &env;
+    }
+        
+    cout << "Encoding through Kakadu " << kdu_get_core_version() << " using " << num_threads << " threads." << endl;
+    
+    //set up codestream       
+    kdu_codestream codestream; 
+    codestream.create(codestream_parameters,&jp2_out);
+        
+    // Set up any specific coding parameters and finalize them. (again)
+    codestream.access_siz()->parse_string("Clayers=1");
+    codestream.access_siz()->parse_string("Clevels=7");
+    codestream.access_siz()->parse_string("Cprecincts={256,256},{256,256},{256,256},{128,128},{128,128},{64,64},{64,64},{32,32},{16,16}");
+    codestream.access_siz()->parse_string("Corder=RPCL");
+        
+    codestream.access_siz()->parse_string("ORGgen_plt=yes");
+    codestream.access_siz()->parse_string("ORGtparts=R");
+    codestream.access_siz()->parse_string("Cblk={64,64}");
+    codestream.access_siz()->parse_string("Cuse_sop=yes");
+        
+    codestream.access_siz()->parse_string("Creversible=yes");
+
+    //fill in the remaining parameters
+    codestream.access_siz()->finalize_all(); 
+        
+    jp2_out.open_codestream();
+        
+    // Now compress the image row by row
+    kdu_stripe_compressor compressor;
+           
+    compressor.start(codestream, 0, nullptr, nullptr, 0, false, false, true, 0.0, 0, false, env_ref);
+    
+    //one pixel per row
+    int stripe_heights[3]={1,1,1};
+    
+    for (uint32 row = 0; row < height; row++) {
+        getScanline (row, linebuffer, bps);
+        
+        if (bps == 8) {
+            compressor.push_stripe((kdu_byte*)linebuffer,stripe_heights);
+        } else if (bps == 16) {
+            int precisions[3]={bps,bps,bps};
+            bool is_signed[3]={false,false,false};
+            compressor.push_stripe((kdu_int16*)linebuffer, stripe_heights, nullptr, nullptr, nullptr, precisions, is_signed);
+        }
+    }
+
+
+    compressor.finish();
+      
+    // Finally, cleanup
+    codestream.destroy(); // All done: simple as that.
+        
+    //stopwatch
+         
+    std::chrono::duration<double> elapsed_seconds = std::chrono::system_clock::now()-start;
+    std::cout << "Encoding took " << elapsed_seconds.count() << " secs\n";
+
+
+#ifdef WIN32
+        fclose (file);
+#endif
+    //}
 
     delete [] linebuffer;
 
