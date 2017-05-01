@@ -21,13 +21,19 @@
 #include <glib/gstdio.h>
 #include <tiff.h>
 #include <tiffio.h>
+#include <tiffio.hxx>
 #include <cstdio>
+#include <chrono>
+#include <thread>
 #include <cstring>
 #include <fcntl.h>
 #include <libiptcdata/iptc-jpeg.h>
 #include "rt_math.h"
 #include "../rtgui/options.h"
 #include "../rtgui/version.h"
+
+#include "kdu_image.h"
+#include "kdu_stripe_compressor.h"
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -45,6 +51,7 @@
 using namespace std;
 using namespace rtengine;
 using namespace rtengine::procparams;
+using namespace kdu_supp;
 
 namespace
 {
