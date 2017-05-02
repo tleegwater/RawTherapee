@@ -21,13 +21,19 @@
 #include <glib/gstdio.h>
 #include <tiff.h>
 #include <tiffio.h>
+#include <tiffio.hxx>
 #include <cstdio>
+#include <chrono>
+#include <thread>
 #include <cstring>
 #include <fcntl.h>
 #include <libiptcdata/iptc-jpeg.h>
 #include "rt_math.h"
 #include "../rtgui/options.h"
 #include "../rtgui/version.h"
+
+#include "kdu_image.h"
+#include "kdu_stripe_compressor.h"
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -45,6 +51,7 @@
 using namespace std;
 using namespace rtengine;
 using namespace rtengine::procparams;
+using namespace kdu_supp;
 
 namespace
 {
@@ -1409,6 +1416,184 @@ int ImageIO::saveTIFF (Glib::ustring fname, int bps, bool uncompressed)
         return IMIO_CANNOTWRITEFILE;
     }
 }
+
+int ImageIO::saveJPEG2000 (Glib::ustring fname, int bps, bool uncompressed)
+{
+    if (getW() < 1 || getH() < 1) {
+        return IMIO_HEADERERROR;
+    }
+
+    //TODO: Handling 32 bits floating point output images!
+    bool writeOk = true;
+    int width = getW ();
+    int height = getH ();
+
+    if (bps < 0) {
+        bps = getBPS ();
+    }
+
+    int lineWidth = width * 3 * bps / 8;
+    unsigned char* linebuffer = new unsigned char[lineWidth];
+
+
+    uint16 num_components = 3; //is always 3 in rt
+
+    std::cout << width << "x" << height << "x" << num_components << "x" << bps << std::endl;
+        
+    //start a stopwatch
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
+        
+    //declare jp2 file
+    jp2_family_tgt tgt;
+    tgt.open(fname.c_str());
+        
+    //declare jp2 box
+    jp2_target jp2_out; 
+    jp2_out.open(&tgt);
+        
+    //set codestream params
+    siz_params *codestream_parameters = new siz_params();
+    
+    codestream_parameters->set(Scomponents, 0, 0, (int)num_components);
+    codestream_parameters->set(Sdims, 0, 0, (int)height);
+    codestream_parameters->set(Sdims, 0, 1, (int)width);
+    codestream_parameters->set(Sprecision, 0, 0, (int)bps);
+    //codestream_parameters->set(Stiles, 0, 0, 1024);
+    //codestream_parameters->set(Stiles, 0, 1, 1024);
+    codestream_parameters->set(Ssigned, 0, 0, false);
+         
+    //fill in the remaining parameters
+    codestream_parameters->finalize_all();
+        
+    //neccesary for jp2 format    
+    jp2_dimensions dimensions = jp2_out.access_dimensions();
+    dimensions.init(codestream_parameters);
+    dimensions.finalize_compatibility(codestream_parameters);
+    
+    //attach color profile
+    jp2_colour colour = jp2_out.access_colour();
+    colour.init((const kdu_byte *)profileData);
+    
+    //neccesary for jp2 format    
+    jp2_resolution resolutions = jp2_out.access_resolution();
+        
+    jp2_out.write_header();
+
+    // buffer for the exif and iptc
+    unsigned int bufferSize;
+    unsigned char* buffer = nullptr; // buffer will be allocated in createTIFFHeader
+    unsigned char* iptcdata = nullptr;
+    unsigned int iptclen = 0;
+
+    if (iptc && iptc_data_save (iptc, &iptcdata, &iptclen) && iptcdata) {
+        iptc_data_free_buf (iptc, iptcdata);
+        iptcdata = nullptr;
+    }
+
+    int size = rtexif::ExifManager::createTIFFHeader (exifRoot, exifChange, width, height, bps, NULL, NULL, (char*)iptcdata, iptclen, buffer, bufferSize);
+
+    if (iptcdata) {
+        iptc_data_free_buf (iptc, iptcdata);
+    }
+            
+    //set exif data to the exif box
+    static kdu_byte exif_uuid[] = {'J', 'p', 'g', 'T', 'i', 'f', 'f', 'E', 'x', 'i', 'f', '-', '>', 'J', 'P', '2'};
+    jp2_output_box jp2_out_box;
+    jp2_out_box.open(&tgt, jp2_uuid_4cc);
+    jp2_out_box.set_target_size(bufferSize + sizeof(exif_uuid));
+    jp2_out_box.write(exif_uuid, sizeof(exif_uuid));
+    jp2_out_box.write((kdu_byte *) buffer, bufferSize);
+    jp2_out_box.close();
+        
+    
+    //initialize multithreading
+    int num_threads = std::thread::hardware_concurrency();
+    kdu_thread_env env, *env_ref = nullptr;
+    if (num_threads > 0) {
+        env.create();
+        for (int nt = 1; nt < num_threads; nt++) {
+            if (!env.add_thread()) num_threads = nt; // Unable to create all the threads requested
+        }
+        env_ref = &env;
+    }
+        
+    cout << "Encoding through Kakadu " << kdu_get_core_version() << " using " << num_threads << " threads." << endl;
+    
+    //set up codestream       
+    kdu_codestream codestream; 
+    codestream.create(codestream_parameters,&jp2_out);
+        
+    // Set up any specific coding parameters and finalize them. (again)
+    codestream.access_siz()->parse_string("Clayers=1");
+    codestream.access_siz()->parse_string("Clevels=7");
+    codestream.access_siz()->parse_string("Cprecincts={256,256},{256,256},{256,256},{128,128},{128,128},{64,64},{64,64},{32,32},{16,16}");
+    codestream.access_siz()->parse_string("Corder=RPCL");
+        
+    codestream.access_siz()->parse_string("ORGgen_plt=yes");
+    codestream.access_siz()->parse_string("ORGtparts=R");
+    codestream.access_siz()->parse_string("Cblk={64,64}");
+    codestream.access_siz()->parse_string("Cuse_sop=yes");
+        
+    codestream.access_siz()->parse_string("Creversible=yes");
+
+    //fill in the remaining parameters
+    codestream.access_siz()->finalize_all(); 
+        
+    jp2_out.open_codestream();
+        
+    // Now compress the image row by row
+    kdu_stripe_compressor compressor;
+           
+    compressor.start(codestream, 0, nullptr, nullptr, 0, false, false, true, 0.0, 0, false, env_ref);
+    
+    //one pixel per row
+    int stripe_heights[3]={1,1,1};
+    
+    for (uint32 row = 0; row < height; row++) {
+        getScanline (row, linebuffer, bps);
+        
+        if (bps == 8) {
+            compressor.push_stripe((kdu_byte*)linebuffer,stripe_heights);
+        } else if (bps == 16) {
+            int precisions[3]={bps,bps,bps};
+            bool is_signed[3]={false,false,false};
+            compressor.push_stripe((kdu_int16*)linebuffer, stripe_heights, nullptr, nullptr, nullptr, precisions, is_signed);
+        }
+    }
+
+
+    compressor.finish();
+      
+    // Finally, cleanup
+    codestream.destroy(); // All done: simple as that.
+        
+    //stopwatch
+         
+    std::chrono::duration<double> elapsed_seconds = std::chrono::system_clock::now()-start;
+    std::cout << "Encoding took " << elapsed_seconds.count() << " secs\n";
+
+
+#ifdef WIN32
+        fclose (file);
+#endif
+    //}
+
+    delete [] linebuffer;
+
+    if (pl) {
+        pl->setProgressStr ("PROGRESSBAR_READY");
+        pl->setProgress (1.0);
+    }
+
+    if(writeOk) {
+        return IMIO_SUCCESS;
+    } else {
+        g_remove (fname.c_str());
+        return IMIO_CANNOTWRITEFILE;
+    }
+}
+
 
 // PNG read and write routines:
 
